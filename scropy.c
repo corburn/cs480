@@ -1,8 +1,10 @@
-#include <errno.h>
+// open function and flag definitions
 #include <fcntl.h>
+// print functions and std{in,out,err}
 #include <stdio.h>
-#include <sys/types.h>
+// create file mode definitions
 #include <sys/stat.h>
+// read, write, and close functions
 #include <unistd.h>
 
 void print_usage(char *program_name);
