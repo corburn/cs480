@@ -41,8 +41,8 @@ int main(int argc, char **argv) {
       *buf = *(buf+1);
       *(buf+1) = tmp;
     }
-    ssize_t n = write(fd_dst, buf, nr);
-    if(n == -1) {
+    ssize_t nw = write(fd_dst, buf, nr);
+    if(nw == -1) {
       perror("write DEST");
     }
   }
