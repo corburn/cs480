@@ -9,7 +9,7 @@
 
 void print_usage(char *program_name);
 
-int main(int argc, char ** argv) {
+int main(int argc, char **argv) {
   if(argc < 3) {
     // Insufficient arguments
     print_usage(argv[0]);
@@ -49,8 +49,12 @@ int main(int argc, char ** argv) {
   if(nr == -1) {
     perror("read SOURCE");
   }
-  close(fd_src);
-  close(fd_dst);
+  if(close(fd_src) == -1) {
+    perror("close SOURCE");
+  }
+  if(close(fd_dst) == -1) {
+    perror("close DEST");
+  }
   return 0;
 }
 
