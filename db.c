@@ -1,0 +1,201 @@
+/**
+ * db.c
+ *
+ * A collection of functions that use system calls to maintain a database
+ * of Person structures with a name and ID.
+ *
+ * Compile and run the program passing it the name of a nonexistent file to see
+ * a functional demonstration.
+ *
+ * @author Jason Travis
+ */
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+/**
+ * struct Person - An entry in the database
+ * @id: a unique number to identify the person
+ * @name: the name of the person
+ */
+struct Person {
+  int id;
+  char name[50];
+};
+
+void addP(struct Person *p);
+int getP(char *name);
+void removeP(char *name);
+void printDB();
+void demo();
+
+int fd;
+char *filename;
+
+int main(int argc, char **argv) {
+  if(argc < 2) {
+    // Insufficient arguments
+    fprintf(stderr, "usage: %s FILE", argv[0]);
+    exit(EXIT_FAILURE);
+  }
+  fd = open(argv[1],O_RDWR|O_CREAT,0644);
+  if(fd == -1) {
+    fprintf(stderr, "%s: Couldn't open file %s; %s\n", argv[0], argv[1], strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+  filename = argv[1];
+
+  demo();
+
+  close(fd);
+  return EXIT_SUCCESS;
+}
+
+/**
+ * addP - Append Person to database
+ * @p: Pointer to the Person to add
+ *
+ * Prints the Person's ID and name when the user is successfully added
+ */
+void addP(struct Person *p) {
+  // Append to the end of file
+  if(lseek(fd,0,SEEK_END) == -1) {
+    perror(NULL);
+    return;
+  }
+  if(write(fd, p, sizeof(struct Person)) == -1) {
+    perror(NULL);
+    return;
+  }
+  printf("%i:%s\n",p->id,p->name);
+}
+
+/**
+ * getP - Retrieve Person ID
+ * @name: Name of the Person to find
+ *
+ * Return: ID of first match or -1 if none found
+ */
+int getP(char *name) {
+  int id = -1;
+  size_t nr;
+  struct Person p;
+  // Search from beginning of file
+  if(lseek(fd,0,SEEK_SET) == -1) {
+    perror(NULL);
+  }
+  // Find first occurrence of name
+  while((nr = read(fd,&p,sizeof(p))) > 0) {
+    if(strcmp(name,p.name) == 0) {
+      id = p.id;
+      break;
+    }
+  }
+  if(nr == -1) {
+    perror(NULL);
+  }
+  printf("%d\n",id);
+  return id;
+}
+
+/**
+ * removeP - Remove Person from database
+ * @name: Name of the Person to remove
+ *
+ * Remove first occurence of Person with the given name from the database
+ */
+void removeP(char *name) {
+  int count = 0;
+  size_t nr;
+  // Search from beginning of file
+  if(lseek(fd,0,SEEK_SET) == -1) {
+    perror(NULL);
+    return;
+  }
+  // Find first occurence of name
+  struct Person p;
+  while((nr = read(fd,&p,sizeof(p))) > 0) {
+    ++count;
+    if(strcmp(name,p.name) == 0) {
+      printf("%i:%s\n",p.id,p.name);
+      break;
+    }
+  }
+  if(nr == -1) {
+    perror(NULL);
+  }
+  if(nr == 0) {
+    // Reached EOF and found no match
+    printf("%s not found\n",name);
+    return;
+  }
+  while((nr = read(fd,&p,sizeof(p))) > 0) {
+    // Remove entry and close the gap by shifting all entries over one
+    ++count;
+    if(lseek(fd,-2*sizeof(p),SEEK_CUR) == -1) {
+      perror(NULL);
+      return;
+    }
+    if(write(fd,&p,sizeof(p)) == -1) {
+      perror(NULL);
+      return;
+    }
+    if(lseek(fd,sizeof(p),SEEK_CUR) == -1) {
+      perror(NULL);
+      return;
+    }
+  }
+  if(nr == -1) {
+    perror(NULL);
+  }
+  // Truncate database to the number of entries minus the one removed
+  truncate(filename,(count-1)*sizeof(p));
+}
+
+/**
+ * printDB - Print the name and ID of everyone in the database
+ */
+void printDB() {
+  size_t nr;
+  struct Person p;
+  // Search from beginning of file
+  if(lseek(fd,0,SEEK_SET) == -1) {
+    perror(NULL);
+  }
+  while((nr = read(fd,&p,sizeof(p))) > 0) {
+    printf("%d:%s\n", p.id, p.name);
+  }
+  if(nr == -1) {
+    perror(NULL);
+  }
+}
+
+/**
+ * demo - Demonstrate program functionality
+ *
+ * Add entries to an example database, remove, and find an entry.
+ */
+void demo() {
+  char *name;
+  char *names[] = {"Jack", "Jill", "John", "Jane", "Bill"};
+  struct Person p;
+  printf("Initializing test database...\n");
+  for(int i = 0; i < sizeof(names)/sizeof(char*); i++) {
+    p.id = i;
+    strcpy(p.name,names[i]);
+    addP(&p);
+  }
+  printf("Printing database...\n");
+  printDB();
+  name = names[sizeof(names)/sizeof(char*)/2];
+  printf("Removing \"%s\"...\n",name);
+  removeP(name);
+  printf("Printing database...\n");
+  printDB();
+  name = names[sizeof(names)/sizeof(char*)/2+1];
+  printf("Getting \"%s\"...\n",name);
+  getP(name);
+}
