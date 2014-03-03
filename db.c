@@ -48,6 +48,7 @@ int main(int argc, char **argv) {
   }
   filename = argv[1];
 
+  // Run functional demonstration
   demo();
 
   close(fd);
@@ -120,6 +121,7 @@ void removeP(char *name) {
   while((nr = read(fd,&p,sizeof(p))) > 0) {
     ++count;
     if(strcmp(name,p.name) == 0) {
+      // Print id and name as confirmation to the user the Person was removed
       printf("%i:%s\n",p.id,p.name);
       break;
     }
@@ -199,3 +201,4 @@ void demo() {
   printf("Getting \"%s\"...\n",name);
   getP(name);
 }
+
