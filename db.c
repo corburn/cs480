@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -31,12 +32,14 @@ void addP(struct Person *p);
 int getP(char *name);
 void removeP(char *name);
 void printDB();
+void demo();
 int lockDB();
 void unlockDB(int fdlock);
-void demo();
+int countEntries();
 
 int fd;
 char *filename;
+int entries;
 
 int main(int argc, char **argv) {
     if(argc < 2) {
@@ -45,7 +48,7 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
     }
 
-    // Open Database
+    // Open the database
     filename = argv[1];
     fd = open(filename,O_RDWR|O_CREAT,0644);
     if(fd == -1) {
@@ -53,7 +56,9 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
     }
 
-    // Only the original parent should fork processes
+    entries = countEntries();
+
+    // Use the original pid to guarantee it is the only one forking processes
     pid_t parent = getpid();
 
     // Launch 3 processes to modify the database
@@ -75,7 +80,7 @@ int main(int argc, char **argv) {
         close(fd);
     } else {
         // Child processes run functional demonstration
-        demo();
+        //demo();
     }
     return EXIT_SUCCESS;
 }
@@ -230,29 +235,43 @@ void demo() {
 }
 
 /**
- * lockDB - Create a lockfile
+ * lockDB - Lock the database
+ * Wait until a lockfile is successfully created
  *
- * Wait until the lockfile is successfully created
- * see unlockDB
+ * See unlockDB
  */
 int lockDB() {
     int lockfile;
-    while((lockfile = open("db.lock", O_CREAT|O_EXCL,0444)) == -1 && errno == EEXIST) {
-        //perror("open");
+    while((lockfile = open("db.lock", O_CREAT|O_EXCL,0444)) == -1 && errno == EEXIST);
+    if(lockfile == -1) {
+        perror("lockDB");
     }
     return lockfile;
 }
 
 /**
- * unlockDB - Release the lockfile
- *
+ * unlockDB - Unlock the database
  * Close and delete the lockfile
- * see lockDB
+ *
+ * See lockDB
  */
 void unlockDB(int lockfile) {
-    close(lockfile);
-    //perror("close");
-    unlink("db.lock");
-    //perror("unlink");
+    if(close(lockfile) == -1) {
+        perror("unlockDB close");
+    }
+    if(unlink("db.lock") == -1) {
+        perror("unlockDB unlink");
+    }
 }
 
+/**
+ * countEntries - Number of entries in the database
+ * Uses stat to calculate the number of database entries
+ *
+ * Return: number of entries in the database
+ */
+int countEntries() {
+    struct stat st;
+    stat(filename,&st);
+    return st.st_size/(sizeof(struct Person));
+}
