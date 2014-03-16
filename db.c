@@ -28,16 +28,18 @@ struct Person {
     char name[50];
 };
 
-void addP(struct Person *p);
-int getP(char *name);
-void removeP(char *name);
-void printDB();
-void demo();
-int lockDB();
-void unlockDB(int fdlock);
+void addP(const struct Person *p);
+int getP(const char *name);
+void removeP(const char *name);
+void printDB(void);
+void demo(void);
+int lockDB(void);
+void unlockDB(const int fdlock);
+int countEntries(void);
 
-int fd;
-char *filename;
+static int fd;
+static char *filename;
+static int entries;
 
 int main(int argc, char **argv) {
     if(argc < 2) {
@@ -87,7 +89,7 @@ int main(int argc, char **argv) {
  *
  * Prints the Person's ID and name when the user is successfully added
  */
-void addP(struct Person *p) {
+void addP(const struct Person *p) {
     int lock = lockDB();
     // Append to the end of file
     if(lseek(fd,0,SEEK_END) == -1) {
@@ -108,7 +110,7 @@ void addP(struct Person *p) {
  *
  * Return: ID of first match or -1 if none found
  */
-int getP(char *name) {
+int getP(const char *name) {
     int lock = lockDB();
     int id = -1;
     size_t nr;
@@ -139,7 +141,7 @@ int getP(char *name) {
  *
  * Remove first occurence of Person with the given name from the database
  */
-void removeP(char *name) {
+void removeP(const char *name) {
     int lock = lockDB();
     int count = 0;
     size_t nr;
@@ -193,7 +195,7 @@ void removeP(char *name) {
 /**
  * printDB - Print the name and ID of everyone in the database
  */
-void printDB() {
+void printDB(void) {
     int lock = lockDB();
     size_t nr;
     struct Person p;
@@ -238,7 +240,7 @@ void demo() {
  *
  * See unlockDB
  */
-int lockDB() {
+int lockDB(void) {
     int lockfile;
     while((lockfile = open("db.lock", O_CREAT|O_EXCL,0444)) == -1 && errno == EEXIST);
     if(lockfile == -1) {
@@ -253,7 +255,7 @@ int lockDB() {
  *
  * See lockDB
  */
-void unlockDB(int lockfile) {
+void unlockDB(const int lockfile) {
     if(close(lockfile) == -1) {
         perror("unlockDB close");
     }
