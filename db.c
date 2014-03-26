@@ -33,8 +33,8 @@ int getP(const char *name);
 void removeP(const char *name);
 void printDB(void);
 void closeDB(void);
-int lockDB(void);
-void unlockDB(const int fdlock);
+void lockDB(struct flock *region, int type);
+void unlockDB(const struct flock *region);
 void demo(void);
 int countEntries(void);
 
@@ -106,7 +106,6 @@ int main(int argc, char **argv) {
  * Prints the Person's ID and name when the user is successfully added
  */
 void addP(const struct Person *p) {
-    int lock = lockDB();
     // Append to the end of file
     if(lseek(fd,0,SEEK_END) == -1) {
         perror(NULL);
@@ -117,7 +116,6 @@ void addP(const struct Person *p) {
         return;
     }
     printf("Process_%d added %i:%s\n",getpid(),p->id,p->name);
-    unlockDB(lock);
 }
 
 /**
@@ -127,7 +125,6 @@ void addP(const struct Person *p) {
  * Return: ID of first match or -1 if none found
  */
 int getP(const char *name) {
-    int lock = lockDB();
     int id = -1;
     size_t nr;
     struct Person p;
@@ -147,7 +144,6 @@ int getP(const char *name) {
     }
     // Print ID of the person found
     printf("Process_%d found %d\n",getpid(),id);
-    unlockDB(lock);
     return id;
 }
 
@@ -158,7 +154,6 @@ int getP(const char *name) {
  * Remove first occurence of Person with the given name from the database
  */
 void removeP(const char *name) {
-    int lock = lockDB();
     int count = 0;
     size_t nr;
     // Search from beginning of file
@@ -205,14 +200,12 @@ void removeP(const char *name) {
     }
     // Truncate database to the number of entries minus the one removed
     truncate(filename,(count-1)*sizeof(p));
-    unlockDB(lock);
 }
 
 /**
  * printDB - Print the name and ID of everyone in the database
  */
 void printDB(void) {
-    int lock = lockDB();
     size_t nr;
     struct Person p;
     // Search from beginning of file
@@ -225,7 +218,6 @@ void printDB(void) {
     if(nr == -1) {
         perror(NULL);
     }
-    unlockDB(lock);
 }
 
 /**
@@ -252,18 +244,39 @@ void demo() {
 }
 
 /**
+ * TODO: comments
  * lockDB - Lock the database
  * Wait until a lockfile is successfully created
  *
  * See unlockDB
  */
-int lockDB(void) {
-    int lockfile;
-    while((lockfile = open("db.lock", O_CREAT|O_EXCL,0444)) == -1 && errno == EEXIST);
-    if(lockfile == -1) {
-        perror("lockDB");
+void lockDB(struct flock *region, int type) {
+    char *types[] = {"F_RDLCK", "F_WRLCK", "F_UNLCK" } ;
+    while(1) {
+        printf("Process_%d attempting %s index %lu - %lu \n", getpid(), types[type], region->l_start/sizeof(struct Person), (region->l_start + region->l_len)/sizeof(struct Person));
+        while(1) {
+            printf("Process_%d testing F_GETLK\n", getpid());
+            region->l_type = type;
+            if(fcntl(fd,F_GETLK,region) == -1) {
+                perror(NULL);
+            }
+            if (region->l_type == F_WRLCK) {
+                printf("Process_%d Process_%d has a write lock already!\n", getpid(), region->l_pid);
+            } else if (region->l_type == F_RDLCK) {
+                printf("Process_%d Process_%d has a read lock already!\n", getpid(), region->l_pid);
+            }
+            if(region->l_type == F_UNLCK) {
+                break;
+            }
+        }
+        printf("Process_%d attempting F_SETLK\n", getpid());
+        region->l_type = type;
+        if(fcntl(fd,F_SETLK,region) == -1) {
+            perror(NULL);
+        } else {
+            break;
+        }
     }
-    return lockfile;
 }
 
 /**
@@ -272,12 +285,11 @@ int lockDB(void) {
  *
  * See lockDB
  */
-void unlockDB(const int lockfile) {
-    if(close(lockfile) == -1) {
-        perror("unlockDB close");
-    }
-    if(unlink("db.lock") == -1) {
-        perror("unlockDB unlink");
+void unlockDB(const struct flock *region) {
+    char *types[] = {"F_RDLCK", "F_WRLCK", "F_UNLCK" } ;
+    printf("Process_%d releasing %s\n", getpid(), types[region->l_type]);
+    if(fcntl(fd,F_UNLCK,region) == -1) {
+        perror(NULL);
     }
 }
 
