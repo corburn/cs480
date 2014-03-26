@@ -32,16 +32,31 @@ void addP(const struct Person *p);
 int getP(const char *name);
 void removeP(const char *name);
 void printDB(void);
-void demo(void);
+void closeDB(void);
 int lockDB(void);
 void unlockDB(const int fdlock);
+void demo(void);
 int countEntries(void);
 
 static int fd;
 static char *filename;
-static int entries;
+static struct flock region1 = {
+    .l_type = F_RDLCK,
+    .l_whence = SEEK_SET,
+    .l_start = 0,
+    .l_len = sizeof(struct Person)
+};
+static struct flock region2 = {
+    .l_type = F_WRLCK,
+    .l_whence = SEEK_SET,
+    .l_start = 0,
+    .l_len = sizeof(struct Person)
+};
 
 int main(int argc, char **argv) {
+    // Use the original pid to guarantee it is the only one forking processes
+    pid_t parent = getpid();
+
     if(argc < 2) {
         // Insufficient arguments
         fprintf(stderr, "usage: %s FILE", argv[0]);
@@ -50,19 +65,22 @@ int main(int argc, char **argv) {
 
     // Open the database
     filename = argv[1];
-    fd = open(filename,O_RDWR|O_CREAT,0644);
-    if(fd == -1) {
+    // Automatically close the database on normal exit
+    atexit(closeDB);
+    if((fd = open(filename,O_RDWR|O_CREAT,0644)) == -1) {
         fprintf(stderr, "%s: Couldn't open file %s; %s\n", argv[0], argv[1], strerror(errno));
         exit(EXIT_FAILURE);
     }
 
-    // Use the original pid to guarantee it is the only one forking processes
-    pid_t parent = getpid();
+    // TODO create a database for debugging functions
+    demo();
 
     // Launch 3 processes to modify the database
     for(int i=0; i<3; ++i) {
         if(getpid() == parent) {
-            fork();
+            if(fork() == -1) {
+                perror(NULL);
+            }
         }
     }
 
@@ -73,9 +91,7 @@ int main(int argc, char **argv) {
                 break;
             }
         }
-        // As the last step, print and close the database
         printDB();
-        close(fd);
     } else {
         // Child processes run functional demonstration
         demo();
@@ -228,6 +244,7 @@ void demo() {
         strcpy(p.name,buf);
         addP(&p);
     }
+    // TODO uncomment when finished debugging locking
     // Remove all but one of the names from the database
     for(int i = 0; i < 9; i++) {
         removeP(buf);
