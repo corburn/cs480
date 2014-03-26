@@ -33,7 +33,7 @@ int getP(const char *name);
 void removeP(const char *name);
 void printDB(void);
 void closeDB(void);
-void lockDB(struct flock *region, int type);
+void lockDB(struct flock *region);
 void unlockDB(const struct flock *region);
 void demo(void);
 int countEntries(void);
@@ -73,7 +73,10 @@ int main(int argc, char **argv) {
     }
 
     // TODO create a database for debugging functions
-    demo();
+    //demo();
+    struct Person p = {.id = 42, .name = "bob"};
+    addP(&p);
+    addP(&p);
 
     // Launch 3 processes to modify the database
     for(int i=0; i<3; ++i) {
@@ -106,6 +109,14 @@ int main(int argc, char **argv) {
  * Prints the Person's ID and name when the user is successfully added
  */
 void addP(const struct Person *p) {
+    static struct flock region = {
+        .l_type = F_WRLCK,
+        .l_whence = SEEK_END,
+        .l_start = 0,
+        .l_len = sizeof(struct Person)
+    };
+    lockDB(&region);
+    printf("Process_%d adding %i:%s\n",getpid(),p->id,p->name);
     // Append to the end of file
     if(lseek(fd,0,SEEK_END) == -1) {
         perror(NULL);
@@ -115,7 +126,7 @@ void addP(const struct Person *p) {
         perror(NULL);
         return;
     }
-    printf("Process_%d added %i:%s\n",getpid(),p->id,p->name);
+    unlockDB(&region);
 }
 
 /**
@@ -250,7 +261,8 @@ void demo() {
  *
  * See unlockDB
  */
-void lockDB(struct flock *region, int type) {
+void lockDB(struct flock *region) {
+    char type = region->l_type;
     char *types[] = {"F_RDLCK", "F_WRLCK", "F_UNLCK" } ;
     while(1) {
         printf("Process_%d attempting %s index %lu - %lu \n", getpid(), types[type], region->l_start/sizeof(struct Person), (region->l_start + region->l_len)/sizeof(struct Person));
@@ -293,3 +305,54 @@ void unlockDB(const struct flock *region) {
     }
 }
 
+/**
+ * countEntries - Number of entries in the database
+ * Uses stat to calculate the number of database entries
+ *
+ * Return: number of entries in the database
+ */
+int countEntries(void) {
+    struct stat st;
+    stat(filename,&st);
+    return st.st_size/(sizeof(struct Person));
+}
+
+int find(const char *name, int (*fn)(const char *name)) {
+    // Initialize to an invalid number
+    int nr = -2;
+    struct Person p;
+    // Search from the beginning of the file
+    region1.l_start = 0;
+    // Read to EOF or error
+    while(nr != 0 || nr != -1) {
+        // Wait for a lock on the region to be read
+        if(fcntl(fd,F_SETLKW,&region1) == -1) {
+            perror(NULL);
+        }
+        // Move to the locked region
+        lseek(fd,region1.l_start,SEEK_SET);
+        // Read the region
+        nr = read(fd,&p,sizeof(p));
+        // Found matching region
+        // TODO explain returning before releasing lock for caller to handle
+        if(strcmp(name,p.name) == 0) {
+            // Return region index
+            return region1.l_start / sizeof(p);
+        }
+        // Increment to the next region
+        region1.l_start += sizeof(p);
+        // Release region lock
+        if(fcntl(fd,F_UNLCK,&region1) == -1) {
+            perror(NULL);
+        }
+    }
+    return -1;
+}
+
+/**
+ * Should be called by atexit when the database is opened to automatically close
+ * on normal exit.
+ */
+void closeDB(void) {
+    close(fd);
+}
