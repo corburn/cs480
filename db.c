@@ -11,6 +11,7 @@
  */
 #include <errno.h>
 #include <fcntl.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,7 +34,7 @@ int getP(const char *name);
 void removeP(const char *name);
 void printDB(void);
 void closeDB(void);
-void lockDB(struct flock *region);
+int lockDB(struct flock *region);
 void unlockDB(struct flock *region);
 void demo(void);
 int find(const char *name, struct flock *region);
@@ -47,6 +48,7 @@ static char *filename;
 int main(int argc, char **argv) {
     // Use the original pid to guarantee it is the only one forking processes
     pid_t parent = getpid();
+    printf("Process_%d parent process\n",getpid());
 
     if(argc < 2) {
         // Insufficient arguments
@@ -63,9 +65,18 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    // TODO
+    /*struct Person p = {*/
+        /*42,*/
+        /*"Alec"*/
+    /*};*/
+    /*write(fd,&p,sizeof(p));*/
+    /*strcpy(p.name, "Bob");*/
+    /*addP(&p);*/
+    /*sleep(0);*/
     // Launch 3 processes to modify the database
     // TODO reduce to 1 during debugging
-    for(int i=0; i<1; ++i) {
+    for(int i=0; i<3; ++i) {
         if(getpid() == parent) {
             if(fork() == -1) {
                 perror(NULL);
@@ -104,7 +115,7 @@ void addP(const struct Person *p) {
         .l_len = sizeof(struct Person)
     };
 
-    lockDB(&region);
+    fcntl(fd,F_SETLKW,&region);
     printf("Process_%d adding %i:%s\n",getpid(),p->id,p->name);
     if(lseek(fd,region.l_start,region.l_whence) == -1) {
         perror(NULL);
@@ -114,7 +125,8 @@ void addP(const struct Person *p) {
         perror(NULL);
         return;
     }
-    unlockDB(&region);
+    region.l_type = F_UNLCK;
+    fcntl(fd,F_SETLK,&region);
 }
 
 /**
@@ -167,17 +179,23 @@ void removeP(const char *name) {
         .l_start = -sizeof(p),
         .l_len = sizeof(p)
     };
-    if(find(name,&start) == -1) {
-        // Reached EOF and no match found
-        printf("Process_%d could not find %s\n",getpid(),name);
-        return;
+    while(1) {
+        if(find(name,&start) == -1) {
+            // Reached EOF and no match found
+            printf("Process_%d could not find %s\n",getpid(),name);
+            return;
+        }
+        // Found a match, prepare to remove it
+        // Upgrade entry lock to a write lock
+        start.l_type = F_WRLCK;
+        if(lockDB(&start) == -2 || lockDB(&end) == -2) {
+            unlockDB(&start);
+            unlockDB(&end);
+            sched_yield();
+        } else {
+            break;
+        }
     }
-    // Found a match, prepare to remove it
-    lockDB(&end);
-    // Upgrade lock on entry to a write lock
-    // This should come after the lock on the last element to avoid potential deadlock
-    start.l_type = F_WRLCK;
-    lockDB(&start);
     // Read the last entry
     if(lseek(fd,end.l_start,end.l_whence) == -1) {
         perror("removeP seek to last entry");
@@ -311,16 +329,19 @@ void print_region(const char *prefix, const struct flock *region) {
  *
  * See unlockDB
  */
-void lockDB(struct flock *region) {
+int lockDB(struct flock *region) {
+    int tries;
+    int fcntl_status;
     char prefix[80];
     struct flock buf = *region;
     do {
-        while(region->l_type != F_UNLCK) {
+        for(tries = 3; tries>0 && region->l_type != F_UNLCK; --tries) {
             *region = buf;
             sprintf(prefix,"Process_%d F_GETLK",getpid());
             print_region(prefix,region);
             if(fcntl(fd,F_GETLK,region) == -1) {
                 perror(NULL);
+                return -1;
             }
             switch(region->l_type) {
                 case F_RDLCK:
@@ -331,10 +352,20 @@ void lockDB(struct flock *region) {
                     break;
             }
         }
+        // TODO
+        // The resource is busy
+        if(tries == 0) {
+            return -2;
+        }
         *region = buf;
         sprintf(prefix,"Process_%d F_SETLK", getpid());
         print_region(prefix,region);
-    } while(fcntl(fd,F_SETLK,region) == -1);
+    } while((fcntl_status = fcntl(fd,F_SETLK,region)) == -1);
+    if(fcntl_status == -1) {
+        perror("fcntl");
+        return -1;
+    }
+    return 0;
 }
 
 /**
