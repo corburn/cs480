@@ -34,11 +34,12 @@ void removeP(const char *name);
 void printDB(void);
 void closeDB(void);
 void lockDB(struct flock *region);
-void unlockDB(const struct flock *region);
+void unlockDB(struct flock *region);
 void demo(void);
 int find(const char *name, struct flock *region);
 void print_region(const char *prefix, const struct flock *region);
 int count_entries(void);
+int write_null_entry(void);
 
 static int fd;
 static char *filename;
@@ -50,7 +51,7 @@ int main(int argc, char **argv) {
     if(argc < 2) {
         // Insufficient arguments
         fprintf(stderr, "usage: %s FILE", argv[0]);
-        exit(EXIT_FAILURE);
+        return EXIT_FAILURE;
     }
 
     // Open the database
@@ -59,17 +60,8 @@ int main(int argc, char **argv) {
     atexit(closeDB);
     if((fd = open(filename,O_RDWR|O_CREAT,0644)) == -1) {
         fprintf(stderr, "%s: Couldn't open file %s; %s\n", argv[0], argv[1], strerror(errno));
-        exit(EXIT_FAILURE);
+        return EXIT_FAILURE;
     }
-
-    // TODO create a database for debugging functions
-    //demo();
-    struct Person p = {
-        .id = 42,
-        .name = "Alec"
-    };
-    addP(&p);
-    addP(&p);
 
     // Launch 3 processes to modify the database
     // TODO reduce to 1 during debugging
@@ -92,6 +84,7 @@ int main(int argc, char **argv) {
         printDB();
     } else {
         // Child processes run functional demonstration
+        printf("Process_%d reporting for duty\n", getpid());
         demo();
     }
     return EXIT_SUCCESS;
@@ -104,16 +97,16 @@ int main(int argc, char **argv) {
  * Prints the Person's ID and name when the user is successfully added
  */
 void addP(const struct Person *p) {
-    static struct flock region = {
+    struct flock region = {
         .l_type = F_WRLCK,
         .l_whence = SEEK_END,
         .l_start = 0,
         .l_len = sizeof(struct Person)
     };
+
     lockDB(&region);
     printf("Process_%d adding %i:%s\n",getpid(),p->id,p->name);
-    // Append to the end of file
-    if(lseek(fd,0,SEEK_END) == -1) {
+    if(lseek(fd,region.l_start,region.l_whence) == -1) {
         perror(NULL);
         return;
     }
@@ -160,7 +153,6 @@ int getP(const char *name) {
  * Remove first occurence of Person with the given name from the database
  */
 void removeP(const char *name) {
-    int index;
     int count;
     struct Person p;
     struct flock start = {
@@ -172,11 +164,10 @@ void removeP(const char *name) {
     struct flock end = {
         .l_type = F_WRLCK,
         .l_whence = SEEK_END,
-        .l_start = sizeof(p),
+        .l_start = -sizeof(p),
         .l_len = sizeof(p)
     };
-    printf("Process_%d searching for %s\n", getpid(), name);
-    if((index = find(name,&start)) == -1) {
+    if(find(name,&start) == -1) {
         // Reached EOF and no match found
         printf("Process_%d could not find %s\n",getpid(),name);
         return;
@@ -187,9 +178,8 @@ void removeP(const char *name) {
     // This should come after the lock on the last element to avoid potential deadlock
     start.l_type = F_WRLCK;
     lockDB(&start);
-    printf("Process_%d removed %d:%s\n", getpid(), p.id, p.name);
     // Read the last entry
-    if(lseek(fd,-sizeof(p),SEEK_END) == -1) {
+    if(lseek(fd,end.l_start,end.l_whence) == -1) {
         perror("removeP seek to last entry");
         return;
     }
@@ -198,7 +188,7 @@ void removeP(const char *name) {
         return;
     }
     // Overwrite the entry to be removed with the last entry
-    if(lseek(fd,index*sizeof(p),SEEK_SET) == -1) {
+    if(lseek(fd,start.l_start,start.l_whence) == -1) {
         perror("removeP seek to matching entry");
         return;
     }
@@ -211,6 +201,7 @@ void removeP(const char *name) {
     if(truncate(filename,(count-1)*sizeof(p)) == -1) {
         perror("removeP truncate database");
     }
+    printf("Process_%d removed %d:%s\n", getpid(), p.id, p.name);
     unlockDB(&start);
     unlockDB(&end);
 }
@@ -260,6 +251,7 @@ int find(const char *name, struct flock *region) {
     // Initialize to an invalid number
     int nr = -2;
     struct Person p;
+    printf("Process_%d searching for %s\n", getpid(), name);
     // Read from region->l_start to EOF or error
     while(nr != 0 && nr != -1) {
         // Wait for a lock on the region to be read
@@ -271,7 +263,7 @@ int find(const char *name, struct flock *region) {
          *}
          */
         // Move to the locked region
-        lseek(fd,region->l_start,SEEK_SET);
+        lseek(fd,region->l_start,region->l_whence);
         // Read the region
         if((nr = read(fd,&p,sizeof(p))) == -1) {
             perror(NULL);
@@ -309,7 +301,7 @@ void closeDB(void) {
 void print_region(const char *prefix, const struct flock *region) {
     char *types[] = {"F_RDLCK", "F_WRLCK", "F_UNLCK" } ;
     char *whence[] = {"SEEK_SET", "SEEK_CUR", "SEEK_END"} ;
-    printf("%s:\n\tl_type: %s\n\tl_whence: %s\n\tl_start: %lu\n\tl_len: %lu\n\tl_pid: %d\n",prefix,types[region->l_type],whence[region->l_whence],region->l_start/sizeof(struct Person),region->l_len/sizeof(struct Person),region->l_pid);
+    printf("%s:\n\tl_type: %s\n\tl_whence: %s\n\tl_start: %ld\n\tl_len: %lu\n\tl_pid: %d\n",prefix,types[region->l_type],whence[region->l_whence],region->l_start,region->l_len,region->l_pid);
 }
 
 /**
@@ -351,11 +343,12 @@ void lockDB(struct flock *region) {
  *
  * See lockDB
  */
-void unlockDB(const struct flock *region) {
+void unlockDB(struct flock *region) {
     char prefix[80];
-    sprintf(prefix,"Process_%d F_UNLCK", getpid());
+    sprintf(prefix,"Process_%d F_SETLK", getpid());
+    region->l_type = F_UNLCK;
     print_region(prefix,region);
-    if(fcntl(fd,F_UNLCK,region) == -1) {
+    if(fcntl(fd,F_SETLK,region) == -1) {
         perror(NULL);
     }
 }
