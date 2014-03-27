@@ -25,7 +25,7 @@
  */
 struct Person {
     int id;
-    char name[50];
+    char name[20];
 };
 
 void addP(const struct Person *p);
@@ -36,22 +36,12 @@ void closeDB(void);
 void lockDB(struct flock *region);
 void unlockDB(const struct flock *region);
 void demo(void);
-int countEntries(void);
+int find(const char *name, struct flock *region);
+void print_region(const char *prefix, const struct flock *region);
+int count_entries(void);
 
 static int fd;
 static char *filename;
-static struct flock region1 = {
-    .l_type = F_RDLCK,
-    .l_whence = SEEK_SET,
-    .l_start = 0,
-    .l_len = sizeof(struct Person)
-};
-static struct flock region2 = {
-    .l_type = F_WRLCK,
-    .l_whence = SEEK_SET,
-    .l_start = 0,
-    .l_len = sizeof(struct Person)
-};
 
 int main(int argc, char **argv) {
     // Use the original pid to guarantee it is the only one forking processes
@@ -74,12 +64,16 @@ int main(int argc, char **argv) {
 
     // TODO create a database for debugging functions
     //demo();
-    struct Person p = {.id = 42, .name = "bob"};
+    struct Person p = {
+        .id = 42,
+        .name = "Alec"
+    };
     addP(&p);
     addP(&p);
 
     // Launch 3 processes to modify the database
-    for(int i=0; i<3; ++i) {
+    // TODO reduce to 1 during debugging
+    for(int i=0; i<1; ++i) {
         if(getpid() == parent) {
             if(fork() == -1) {
                 perror(NULL);
@@ -87,6 +81,7 @@ int main(int argc, char **argv) {
         }
     }
 
+    // Split parent / child process execution paths
     if(getpid() == parent) {
         // Wait for all child processes to return
         while(wait(NULL)) {
@@ -165,52 +160,59 @@ int getP(const char *name) {
  * Remove first occurence of Person with the given name from the database
  */
 void removeP(const char *name) {
-    int count = 0;
-    size_t nr;
-    // Search from beginning of file
-    if(lseek(fd,0,SEEK_SET) == -1) {
-        perror(NULL);
-        return;
-    }
-    // Find first occurence of name
+    int index;
+    int count;
     struct Person p;
-    while((nr = read(fd,&p,sizeof(p))) > 0) {
-        ++count;
-        if(strcmp(name,p.name) == 0) {
-            // Print id and name as confirmation to the user the Person was removed
-            printf("Process_%d removed %i:%s\n",getpid(),p.id,p.name);
-            break;
-        }
-    }
-    if(nr == -1) {
-        perror(NULL);
-    }
-    if(nr == 0) {
-        // Reached EOF and found no match
+    struct flock start = {
+        .l_type = F_RDLCK,
+        .l_whence = SEEK_SET,
+        .l_start = 0,
+        .l_len = sizeof(p)
+    };
+    struct flock end = {
+        .l_type = F_WRLCK,
+        .l_whence = SEEK_END,
+        .l_start = sizeof(p),
+        .l_len = sizeof(p)
+    };
+    printf("Process_%d searching for %s\n", getpid(), name);
+    if((index = find(name,&start)) == -1) {
+        // Reached EOF and no match found
         printf("Process_%d could not find %s\n",getpid(),name);
         return;
     }
-    while((nr = read(fd,&p,sizeof(p))) > 0) {
-        // Remove entry and close the gap by shifting all entries over one
-        ++count;
-        if(lseek(fd,-2*sizeof(p),SEEK_CUR) == -1) {
-            perror(NULL);
-            return;
-        }
-        if(write(fd,&p,sizeof(p)) == -1) {
-            perror(NULL);
-            return;
-        }
-        if(lseek(fd,sizeof(p),SEEK_CUR) == -1) {
-            perror(NULL);
-            return;
-        }
+    // Found a match, prepare to remove it
+    lockDB(&end);
+    // Upgrade lock on entry to a write lock
+    // This should come after the lock on the last element to avoid potential deadlock
+    start.l_type = F_WRLCK;
+    lockDB(&start);
+    printf("Process_%d removed %d:%s\n", getpid(), p.id, p.name);
+    // Read the last entry
+    if(lseek(fd,-sizeof(p),SEEK_END) == -1) {
+        perror("removeP seek to last entry");
+        return;
     }
-    if(nr == -1) {
-        perror(NULL);
+    if(read(fd,&p,sizeof(p)) == -1) {
+        perror("removeP read last entry");
+        return;
     }
+    // Overwrite the entry to be removed with the last entry
+    if(lseek(fd,index*sizeof(p),SEEK_SET) == -1) {
+        perror("removeP seek to matching entry");
+        return;
+    }
+    if(write(fd,&p,sizeof(p)) == -1) {
+        perror("removeP write over matching entry");
+        return;
+    }
+    count = count_entries();
     // Truncate database to the number of entries minus the one removed
-    truncate(filename,(count-1)*sizeof(p));
+    if(truncate(filename,(count-1)*sizeof(p)) == -1) {
+        perror("removeP truncate database");
+    }
+    unlockDB(&start);
+    unlockDB(&end);
 }
 
 /**
@@ -254,97 +256,41 @@ void demo() {
     }
 }
 
-/**
- * TODO: comments
- * lockDB - Lock the database
- * Wait until a lockfile is successfully created
- *
- * See unlockDB
- */
-void lockDB(struct flock *region) {
-    char type = region->l_type;
-    char *types[] = {"F_RDLCK", "F_WRLCK", "F_UNLCK" } ;
-    while(1) {
-        printf("Process_%d attempting %s index %lu - %lu \n", getpid(), types[type], region->l_start/sizeof(struct Person), (region->l_start + region->l_len)/sizeof(struct Person));
-        while(1) {
-            printf("Process_%d testing F_GETLK\n", getpid());
-            region->l_type = type;
-            if(fcntl(fd,F_GETLK,region) == -1) {
-                perror(NULL);
-            }
-            if (region->l_type == F_WRLCK) {
-                printf("Process_%d Process_%d has a write lock already!\n", getpid(), region->l_pid);
-            } else if (region->l_type == F_RDLCK) {
-                printf("Process_%d Process_%d has a read lock already!\n", getpid(), region->l_pid);
-            }
-            if(region->l_type == F_UNLCK) {
-                break;
-            }
-        }
-        printf("Process_%d attempting F_SETLK\n", getpid());
-        region->l_type = type;
-        if(fcntl(fd,F_SETLK,region) == -1) {
-            perror(NULL);
-        } else {
-            break;
-        }
-    }
-}
-
-/**
- * unlockDB - Unlock the database
- * Close and delete the lockfile
- *
- * See lockDB
- */
-void unlockDB(const struct flock *region) {
-    char *types[] = {"F_RDLCK", "F_WRLCK", "F_UNLCK" } ;
-    printf("Process_%d releasing %s\n", getpid(), types[region->l_type]);
-    if(fcntl(fd,F_UNLCK,region) == -1) {
-        perror(NULL);
-    }
-}
-
-/**
- * countEntries - Number of entries in the database
- * Uses stat to calculate the number of database entries
- *
- * Return: number of entries in the database
- */
-int countEntries(void) {
-    struct stat st;
-    stat(filename,&st);
-    return st.st_size/(sizeof(struct Person));
-}
-
-int find(const char *name, int (*fn)(const char *name)) {
+int find(const char *name, struct flock *region) {
     // Initialize to an invalid number
     int nr = -2;
     struct Person p;
-    // Search from the beginning of the file
-    region1.l_start = 0;
-    // Read to EOF or error
-    while(nr != 0 || nr != -1) {
+    // Read from region->l_start to EOF or error
+    while(nr != 0 && nr != -1) {
         // Wait for a lock on the region to be read
-        if(fcntl(fd,F_SETLKW,&region1) == -1) {
-            perror(NULL);
-        }
+        lockDB(region);
+        /*
+         *if(fcntl(fd,F_SETLKW,region) == -1) {
+         *    perror(NULL);
+         *    break;
+         *}
+         */
         // Move to the locked region
-        lseek(fd,region1.l_start,SEEK_SET);
+        lseek(fd,region->l_start,SEEK_SET);
         // Read the region
-        nr = read(fd,&p,sizeof(p));
-        // Found matching region
-        // TODO explain returning before releasing lock for caller to handle
+        if((nr = read(fd,&p,sizeof(p))) == -1) {
+            perror(NULL);
+            break;
+        }
         if(strcmp(name,p.name) == 0) {
-            // Return region index
-            return region1.l_start / sizeof(p);
+            printf("Process_%d found %s\n", getpid(), name);
+            // Return index of matching region
+            return region->l_start / sizeof(p);
         }
         // Increment to the next region
-        region1.l_start += sizeof(p);
-        // Release region lock
-        if(fcntl(fd,F_UNLCK,&region1) == -1) {
-            perror(NULL);
-        }
+        region->l_start += sizeof(p);
+        /*
+         *if(fcntl(fd,F_UNLCK,region) == -1) {
+         *    perror(NULL);
+         *    break;
+         *}
+         */
+        unlockDB(region);
     }
     return -1;
 }
@@ -355,4 +301,73 @@ int find(const char *name, int (*fn)(const char *name)) {
  */
 void closeDB(void) {
     close(fd);
+}
+
+/*
+ * Prints prefix and the lock structure for debugging
+ */
+void print_region(const char *prefix, const struct flock *region) {
+    char *types[] = {"F_RDLCK", "F_WRLCK", "F_UNLCK" } ;
+    char *whence[] = {"SEEK_SET", "SEEK_CUR", "SEEK_END"} ;
+    printf("%s:\n\tl_type: %s\n\tl_whence: %s\n\tl_start: %lu\n\tl_len: %lu\n\tl_pid: %d\n",prefix,types[region->l_type],whence[region->l_whence],region->l_start/sizeof(struct Person),region->l_len/sizeof(struct Person),region->l_pid);
+}
+
+/**
+ * TODO: comments
+ * lockDB - Lock the database
+ * Wait until a lockfile is successfully created
+ *
+ * See unlockDB
+ */
+void lockDB(struct flock *region) {
+    char prefix[80];
+    struct flock buf = *region;
+    do {
+        while(region->l_type != F_UNLCK) {
+            *region = buf;
+            sprintf(prefix,"Process_%d F_GETLK",getpid());
+            print_region(prefix,region);
+            if(fcntl(fd,F_GETLK,region) == -1) {
+                perror(NULL);
+            }
+            switch(region->l_type) {
+                case F_RDLCK:
+                    printf("Process_%d Process_%d has a read lock at index %lu\n", getpid(), region->l_pid, region->l_start/sizeof(struct Person));
+                    break;
+                case F_WRLCK:
+                    printf("Process_%d Process_%d has a write lock at index %lu\n", getpid(), region->l_pid, region->l_start/sizeof(struct Person));
+                    break;
+            }
+        }
+        *region = buf;
+        sprintf(prefix,"Process_%d F_SETLK", getpid());
+        print_region(prefix,region);
+    } while(fcntl(fd,F_SETLK,region) == -1);
+}
+
+/**
+ * unlockDB - Unlock the database
+ * Close and delete the lockfile
+ *
+ * See lockDB
+ */
+void unlockDB(const struct flock *region) {
+    char prefix[80];
+    sprintf(prefix,"Process_%d F_UNLCK", getpid());
+    print_region(prefix,region);
+    if(fcntl(fd,F_UNLCK,region) == -1) {
+        perror(NULL);
+    }
+}
+
+/**
+ * countEntries - Number of entries in the database
+ * Uses stat to calculate the number of database entries
+ * Return: number of entries in the database
+ */
+int count_entries(void) {
+    struct stat st;
+    // Calculate number of entries based on the size of the file
+    stat(filename,&st);
+    return st.st_size/(sizeof(struct Person));
 }
