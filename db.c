@@ -220,17 +220,19 @@ void printDB() {
  * Add entries to an example database, remove, and find an entry.
  */
 void demo() {
+    char buf[20];
+    sprintf(buf,"Process_%d",getpid());
     struct Person p;
-    char *names[] = {"Teofila", "Treva", "Dennis", "Hannah", "Inocencia", "Basil", "Melba", "Maricela", "Jeffery", "Alec"};
+    //char *names[] = {"Teofila", "Treva", "Dennis", "Hannah", "Inocencia", "Basil", "Melba", "Maricela", "Jeffery", "Alec"};
     // Add each name to the database
-    for(int i = 0; i < sizeof(names)/sizeof(char*); i++) {
+    for(int i = 0; i < 10; i++) {
         p.id = i;
-        strcpy(p.name,names[i]);
+        strcpy(p.name,buf);
         addP(&p);
     }
     // Remove all but one of the names from the database
-    for(int i = 0; i < sizeof(names)/sizeof(char*)-1; i++) {
-        removeP(names[i]);
+    for(int i = 0; i < 9; i++) {
+        removeP(buf);
     }
 }
 
