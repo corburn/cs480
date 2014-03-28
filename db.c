@@ -35,11 +35,9 @@ void printDB();
 void demo();
 int lockDB();
 void unlockDB(int fdlock);
-int countEntries();
 
 int fd;
 char *filename;
-int entries;
 
 int main(int argc, char **argv) {
     if(argc < 2) {
@@ -55,8 +53,6 @@ int main(int argc, char **argv) {
         fprintf(stderr, "%s: Couldn't open file %s; %s\n", argv[0], argv[1], strerror(errno));
         exit(EXIT_FAILURE);
     }
-
-    entries = countEntries();
 
     // Use the original pid to guarantee it is the only one forking processes
     pid_t parent = getpid();
@@ -80,7 +76,7 @@ int main(int argc, char **argv) {
         close(fd);
     } else {
         // Child processes run functional demonstration
-        //demo();
+        demo();
     }
     return EXIT_SUCCESS;
 }
@@ -266,14 +262,3 @@ void unlockDB(int lockfile) {
     }
 }
 
-/**
- * countEntries - Number of entries in the database
- * Uses stat to calculate the number of database entries
- *
- * Return: number of entries in the database
- */
-int countEntries() {
-    struct stat st;
-    stat(filename,&st);
-    return st.st_size/(sizeof(struct Person));
-}
