@@ -35,12 +35,12 @@ void removeP(const char *name);
 void printDB(void);
 void closeDB(void);
 int lockDB(struct flock *region);
-void unlockDB(struct flock *region);
+int lockDBW(struct flock *region);
+int unlockDB(struct flock *region);
 void demo(void);
 int find(const char *name, struct flock *region);
 void print_region(const char *prefix, const struct flock *region);
 int count_entries(void);
-int write_null_entry(void);
 
 static int fd;
 static char *filename;
@@ -65,21 +65,11 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    // TODO
-    /*struct Person p = {*/
-        /*42,*/
-        /*"Alec"*/
-    /*};*/
-    /*write(fd,&p,sizeof(p));*/
-    /*strcpy(p.name, "Bob");*/
-    /*addP(&p);*/
-    /*sleep(0);*/
     // Launch 3 processes to modify the database
-    // TODO reduce to 1 during debugging
     for(int i=0; i<3; ++i) {
         if(getpid() == parent) {
             if(fork() == -1) {
-                perror(NULL);
+                perror("main fork");
             }
         }
     }
@@ -115,18 +105,22 @@ void addP(const struct Person *p) {
         .l_len = sizeof(struct Person)
     };
 
-    fcntl(fd,F_SETLKW,&region);
+    // Wait for EOF lock
+    if(lockDBW(&region) == -1) {
+        return;
+    }
+    // Append Person to EOF
     printf("Process_%d adding %i:%s\n",getpid(),p->id,p->name);
     if(lseek(fd,region.l_start,region.l_whence) == -1) {
-        perror(NULL);
+        perror("addP lseek");
         return;
     }
     if(write(fd, p, sizeof(struct Person)) == -1) {
-        perror(NULL);
+        perror("addP write");
         return;
     }
-    region.l_type = F_UNLCK;
-    fcntl(fd,F_SETLK,&region);
+    // Release lock
+    unlockDB(&region);
 }
 
 /**
@@ -136,26 +130,25 @@ void addP(const struct Person *p) {
  * Return: ID of first match or -1 if none found
  */
 int getP(const char *name) {
-    int id = -1;
-    size_t nr;
     struct Person p;
-    // Search from beginning of file
-    if(lseek(fd,0,SEEK_SET) == -1) {
-        perror(NULL);
+    struct flock region = {
+        .l_type = F_RDLCK,
+        .l_whence = SEEK_SET,
+        .l_start = 0,
+        .l_len = sizeof(p)
+    };
+
+    // Find entry matching name
+    if(find(name,&region) == -1) {
+        printf("Process_%d could not find %s\n",getpid(),name);
+        return -1;
     }
-    // Find first occurrence of name
-    while((nr = read(fd,&p,sizeof(p))) > 0) {
-        if(strcmp(name,p.name) == 0) {
-            id = p.id;
-            break;
-        }
-    }
-    if(nr == -1) {
-        perror(NULL);
-    }
-    // Print ID of the person found
-    printf("Process_%d found %d\n",getpid(),id);
-    return id;
+    // Read and print entry
+    read(fd,&p,sizeof(p));
+    printf("Process_%d found %d:%s\n",getpid(),p.id,p.name);
+    // Release the lock created by find()
+    unlockDB(&region);
+    return p.id;
 }
 
 /**
@@ -180,6 +173,7 @@ void removeP(const char *name) {
         .l_len = sizeof(p)
     };
     while(1) {
+        // Search database for an entry with the given name
         if(find(name,&start) == -1) {
             // Reached EOF and no match found
             printf("Process_%d could not find %s\n",getpid(),name);
@@ -189,10 +183,13 @@ void removeP(const char *name) {
         // Upgrade entry lock to a write lock
         start.l_type = F_WRLCK;
         if(lockDB(&start) == -2 || lockDB(&end) == -2) {
+            // Potential deadlock
+            // Release all locks and try again later
             unlockDB(&start);
             unlockDB(&end);
             sched_yield();
         } else {
+            // Acquired locks
             break;
         }
     }
@@ -214,8 +211,8 @@ void removeP(const char *name) {
         perror("removeP write over matching entry");
         return;
     }
-    count = count_entries();
     // Truncate database to the number of entries minus the one removed
+    count = count_entries();
     if(truncate(filename,(count-1)*sizeof(p)) == -1) {
         perror("removeP truncate database");
     }
@@ -232,13 +229,13 @@ void printDB(void) {
     struct Person p;
     // Search from beginning of file
     if(lseek(fd,0,SEEK_SET) == -1) {
-        perror(NULL);
+        perror("printDB lseek");
     }
     while((nr = read(fd,&p,sizeof(p))) > 0) {
         printf("%d:%s\n", p.id, p.name);
     }
     if(nr == -1) {
-        perror(NULL);
+        perror("printDB read");
     }
 }
 
@@ -247,24 +244,37 @@ void printDB(void) {
  *
  * Add entries to an example database, remove, and find an entry.
  */
-void demo() {
+void demo(void) {
     char buf[20];
     sprintf(buf,"Process_%d",getpid());
     struct Person p;
     //char *names[] = {"Teofila", "Treva", "Dennis", "Hannah", "Inocencia", "Basil", "Melba", "Maricela", "Jeffery", "Alec"};
     // Add each name to the database
-    for(int i = 0; i < 10; i++) {
+    // TODO reduce during debugging
+    for(int i = 0; i < 3; i++) {
         p.id = i;
         strcpy(p.name,buf);
         addP(&p);
     }
     // TODO uncomment when finished debugging locking
     // Remove all but one of the names from the database
-    for(int i = 0; i < 9; i++) {
+    // TODO reduce during debugging
+    for(int i = 0; i < 3; i++) {
         removeP(buf);
     }
+    removeP(buf);
 }
 
+/**
+ * find - find a matching entry
+ * @name name of entry to find
+ * @region lock to find and hold the entry
+ *
+ * Return index of matching entry
+ *
+ * Searches the database for an entry matching the given name
+ * starting from the given region start position to EOF
+ */
 int find(const char *name, struct flock *region) {
     // Initialize to an invalid number
     int nr = -2;
@@ -273,13 +283,9 @@ int find(const char *name, struct flock *region) {
     // Read from region->l_start to EOF or error
     while(nr != 0 && nr != -1) {
         // Wait for a lock on the region to be read
-        lockDB(region);
-        /*
-         *if(fcntl(fd,F_SETLKW,region) == -1) {
-         *    perror(NULL);
-         *    break;
-         *}
-         */
+        if(lockDBW(region) == -1) {
+            break;
+        }
         // Move to the locked region
         lseek(fd,region->l_start,region->l_whence);
         // Read the region
@@ -294,13 +300,9 @@ int find(const char *name, struct flock *region) {
         }
         // Increment to the next region
         region->l_start += sizeof(p);
-        /*
-         *if(fcntl(fd,F_UNLCK,region) == -1) {
-         *    perror(NULL);
-         *    break;
-         *}
-         */
-        unlockDB(region);
+        if(unlockDB(region) == -1) {
+            break;
+        }
     }
     return -1;
 }
@@ -323,10 +325,9 @@ void print_region(const char *prefix, const struct flock *region) {
 }
 
 /**
- * TODO: comments
  * lockDB - Lock the database
- * Wait until a lockfile is successfully created
  *
+ * Return -1 on error or -2 if a lock was not acquired within 3 attempts
  * See unlockDB
  */
 int lockDB(struct flock *region) {
@@ -340,7 +341,7 @@ int lockDB(struct flock *region) {
             sprintf(prefix,"Process_%d F_GETLK",getpid());
             print_region(prefix,region);
             if(fcntl(fd,F_GETLK,region) == -1) {
-                perror(NULL);
+                perror(prefix);
                 return -1;
             }
             switch(region->l_type) {
@@ -352,8 +353,7 @@ int lockDB(struct flock *region) {
                     break;
             }
         }
-        // TODO
-        // The resource is busy
+        // Potential deadlock
         if(tries == 0) {
             return -2;
         }
@@ -362,7 +362,26 @@ int lockDB(struct flock *region) {
         print_region(prefix,region);
     } while((fcntl_status = fcntl(fd,F_SETLK,region)) == -1);
     if(fcntl_status == -1) {
-        perror("fcntl");
+        perror(prefix);
+        return -1;
+    }
+    return 0;
+}
+
+/**
+ * lockDBW - Lock the database
+ * Wait until a lock is successfully acquired
+ *
+ * Return -1 on error
+ *
+ * See unlockDB
+ */
+int lockDBW(struct flock *region) {
+    char prefix[80];
+    sprintf(prefix,"Process_%d F_SETLKW",getpid());
+    print_region(prefix,region);
+    if(fcntl(fd,F_SETLKW,region) == -1) {
+        perror(prefix);
         return -1;
     }
     return 0;
@@ -370,18 +389,20 @@ int lockDB(struct flock *region) {
 
 /**
  * unlockDB - Unlock the database
- * Close and delete the lockfile
+ * Release the region lock
  *
  * See lockDB
  */
-void unlockDB(struct flock *region) {
+int unlockDB(struct flock *region) {
     char prefix[80];
-    sprintf(prefix,"Process_%d F_SETLK", getpid());
+    sprintf(prefix,"Process_%d F_UNLCK", getpid());
     region->l_type = F_UNLCK;
     print_region(prefix,region);
     if(fcntl(fd,F_SETLK,region) == -1) {
-        perror(NULL);
+        perror(prefix);
+        return -1;
     }
+    return 0;
 }
 
 /**
