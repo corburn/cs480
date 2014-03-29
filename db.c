@@ -18,67 +18,22 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "db.h"
+
+
 /**
- * struct Person - An entry in the database
- * @id: a unique number to identify the person
- * @name: the name of the person
+ * openDB - opens the database
+ * @file - the name of the database file
+ * This function should be called before any other
  */
-struct Person {
-    int id;
-    char name[50];
-};
-
-void addP(struct Person *p);
-int getP(char *name);
-void removeP(char *name);
-void printDB();
-void demo();
-int lockDB();
-void unlockDB(int fdlock);
-
-int fd;
-char *filename;
-
-int main(int argc, char **argv) {
-    if(argc < 2) {
-        // Insufficient arguments
-        fprintf(stderr, "usage: %s FILE", argv[0]);
-        exit(EXIT_FAILURE);
-    }
-
+void openDB(char *file) {
+    filename = file;
     // Open the database
-    filename = argv[1];
     fd = open(filename,O_RDWR|O_CREAT,0644);
     if(fd == -1) {
-        fprintf(stderr, "%s: Couldn't open file %s; %s\n", argv[0], argv[1], strerror(errno));
+        perror("openDB");
         exit(EXIT_FAILURE);
     }
-
-    // Use the original pid to guarantee it is the only one forking processes
-    pid_t parent = getpid();
-
-    // Launch 3 processes to modify the database
-    for(int i=0; i<3; ++i) {
-        if(getpid() == parent) {
-            fork();
-        }
-    }
-
-    if(getpid() == parent) {
-        // Wait for all child processes to return
-        while(wait(NULL)) {
-            if(errno == ECHILD) {
-                break;
-            }
-        }
-        // As the last step, print and close the database
-        printDB();
-        close(fd);
-    } else {
-        // Child processes run functional demonstration
-        demo();
-    }
-    return EXIT_SUCCESS;
 }
 
 /**
@@ -208,28 +163,6 @@ void printDB() {
         perror(NULL);
     }
     unlockDB(lock);
-}
-
-/**
- * demo - Demonstrate program functionality
- *
- * Add entries to an example database, remove, and find an entry.
- */
-void demo() {
-    char buf[20];
-    sprintf(buf,"Process_%d",getpid());
-    struct Person p;
-    //char *names[] = {"Teofila", "Treva", "Dennis", "Hannah", "Inocencia", "Basil", "Melba", "Maricela", "Jeffery", "Alec"};
-    // Add each name to the database
-    for(int i = 0; i < 10; i++) {
-        p.id = i;
-        strcpy(p.name,buf);
-        addP(&p);
-    }
-    // Remove all but one of the names from the database
-    for(int i = 0; i < 9; i++) {
-        removeP(buf);
-    }
 }
 
 /**
