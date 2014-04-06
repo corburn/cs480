@@ -1,6 +1,7 @@
 CFLAGS=-std=c99
 
-all: db
+run: db
+	./db test.db
 
 db: db.o
 	$(CC) -o $@ $^
@@ -12,8 +13,5 @@ db: db.o
 
 clean:
 	-rm db *.o *.d test.db
-
-run: all
-	./db test.db
 
 include $(wildcard *.d)

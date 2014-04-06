@@ -250,16 +250,13 @@ void demo(void) {
     struct Person p;
     //char *names[] = {"Teofila", "Treva", "Dennis", "Hannah", "Inocencia", "Basil", "Melba", "Maricela", "Jeffery", "Alec"};
     // Add each name to the database
-    // TODO reduce during debugging
-    for(int i = 0; i < 3; i++) {
+    for(int i = 0; i < 10; i++) {
         p.id = i;
         strcpy(p.name,buf);
         addP(&p);
     }
-    // TODO uncomment when finished debugging locking
     // Remove all but one of the names from the database
-    // TODO reduce during debugging
-    for(int i = 0; i < 3; i++) {
+    for(int i = 0; i < 9; i++) {
         removeP(buf);
     }
     removeP(buf);
