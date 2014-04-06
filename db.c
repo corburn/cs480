@@ -33,13 +33,14 @@ struct Person {
 
 void addP(struct Person *p);
 void closeDB(void);
-void *demo(void *arg);
+void *demo();
 int getP(char *name);
 void printDB(void);
 void removeP(char *name);
 
 int fd;
 char *filename;
+// Create a mutex
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int main(int argc, char **argv) {
@@ -77,11 +78,13 @@ int main(int argc, char **argv) {
         }
     }
 
+    // Release the mutex
     if(pthread_mutex_destroy(&mutex) != 0) {
         perror("Destroy mutex");
         exit(EXIT_FAILURE);
     }
 
+    // Print the database
     printf("Printing the database...\n");
     printDB();
 
@@ -110,7 +113,7 @@ void addP(struct Person *p) {
 }
 
 /**
- * closeDB should be called by atexit() to automatically close the database on normal exit
+ * closeDB is a wrapper for atexit() to automatically close the database on normal exit
  */
 void closeDB(void) {
     close(fd);
@@ -119,20 +122,20 @@ void closeDB(void) {
 /**
  * demo is executed by a thread demonstrating add and remove functionality
  */
-void *demo(void *arg) {
+void *demo() {
     struct Person p;
     char buf[sizeof(p.name)];
     // Initialize Person name
     sprintf(buf,"Thread_%lu",pthread_self());
     strcpy(p.name,buf);
     printf("Thread %lu reporting for duty\n", pthread_self());
-    // Add 10 entries where the name is the thread identifier
+    // Add entries where the name is the thread identifier
     // and the id is the loop iteration that created it
     for(int i=0; i<10; ++i) {
         p.id = i;
         addP(&p);
     }
-    // Remove 9 entries
+    // Remove entries
     for(int i=0; i<9; ++i) {
         removeP(buf);
     }
@@ -179,6 +182,7 @@ void printDB() {
     if(lseek(fd,0,SEEK_SET) == -1) {
         perror(NULL);
     }
+    // Print each entry
     while((nr = read(fd,&p,sizeof(p))) > 0) {
         printf("%d:%s\n", p.id, p.name);
     }
