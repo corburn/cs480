@@ -1,11 +1,13 @@
 CFLAGS=-std=c99
-LDFLAGS=-pthread
 
-run: db
-	./db test.db
+run: partBResponse partBGuess
+	@./partBGuess&
+	@sleep 1
+	@./partBResponse
 
-db: db.o
-	$(CC) $(LDFLAGS) -o $@ $^
+partBResponse: partBResponse.o
+
+partBGuess: partBGuess.o
 
 %.o: %.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c -MMD -MP -o $@ $<
@@ -13,6 +15,6 @@ db: db.o
 .PHONY: clean run
 
 clean:
-	-rm db -f *.o *.d test.db
+	-rm -f *.o *.d partBResponse partBGuess guess response
 
 include $(wildcard *.d)
