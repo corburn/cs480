@@ -21,6 +21,7 @@ struct Pipe p;
 int main(int argc, char **argv) {
     int answer;
 
+    // Prompt until a valid number is entered
     do {
         printf("Enter a number between 1 and %d: ", MAX);
         if(scanf("%d", &answer) == -1) {
@@ -49,14 +50,24 @@ int main(int argc, char **argv) {
             exit(EXIT_FAILURE);
             break;
         case 0:
+            // Close pipe ends that will not be used by the child
             close(p.guess[0]);
             close(p.answer[1]);
+            // Send guesses
             startGuessing(MAX);
-            break;
-        default:
+            // Finished with pipe, close remaining ends
             close(p.guess[1]);
             close(p.answer[0]);
+            break;
+        default:
+            // Close pipe ends that will not be used by the parent
+            close(p.guess[1]);
+            close(p.answer[0]);
+            // Respond to guesses
             startAnswering(answer);
+            // Finished with pipe, close remaining ends
+            close(p.guess[0]);
+            close(p.answer[1]);
             break;
     }
 
