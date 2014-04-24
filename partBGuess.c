@@ -1,6 +1,6 @@
 // The maximum number the user can enter
 // It must be a power of 2
-#define MAX 64
+#define MAX 1024
 
 #include <stdio.h>
 #include <stdlib.h>

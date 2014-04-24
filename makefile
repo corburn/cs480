@@ -1,20 +1,30 @@
 CFLAGS=-std=c99
 
-run: partBResponse partBGuess
+usage:
+	@echo Run the command \'make A\' or \'make B\'
+	@echo \'make A\' - compile and execute Part A
+	@echo \'make B\' - compile and execute Part B
+
+A: partA
+	@./$^
+
+B: partBResponse partBGuess
 	@./partBGuess&
 	@sleep 1
 	@./partBResponse
 
-partBResponse: partBResponse.o
+partA: partA.c
 
-partBGuess: partBGuess.o
+partBResponse: partBResponse.c
+
+partBGuess: partBGuess.c
 
 %.o: %.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c -MMD -MP -o $@ $<
 
-.PHONY: clean run
+.PHONY: A B clean
 
 clean:
-	-rm -f *.o *.d partBResponse partBGuess guess response
+	-rm -f *.o *.d partA partBResponse partBGuess guess response
 
 include $(wildcard *.d)
