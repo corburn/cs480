@@ -20,6 +20,7 @@ static char *query = "query", *response = "response";
 int main(int argc, char **argv) {
     printf("Guess start\n");
 
+    // Close pipes on successful exit
     atexit(closePipes);
 
     if(mkfifo(query, 0777) == -1) {
@@ -38,6 +39,7 @@ int main(int argc, char **argv) {
     if((fdAnswer = open(response, O_RDONLY)) == -1) {
         perror("open response pipe O_RDONLY");
     }
+    // Send guesses through the query pipe
     startGuessing(MAX);
     printf("Guess done\n");
     exit(EXIT_SUCCESS);
@@ -45,21 +47,24 @@ int main(int argc, char **argv) {
     return 0;
 }
 
+// Called by atexit to close and delete the pipes on successful exit
 void closePipes(void) {
-    if(unlink(query) == -1) {
-        perror("unlink query");
-    }
-    if(unlink(response) == -1) {
-        perror("unlink response");
-    }
     if(close(fdGuess) == -1) {
         perror("close query");
     }
     if(close(fdAnswer) == -1) {
         perror("close query");
     }
+    if(unlink(query) == -1) {
+        perror("unlink query");
+    }
+    if(unlink(response) == -1) {
+        perror("unlink response");
+    }
 }
 
+// Send guesses through the query pipe and listen for answers
+// on the response pipe
 void startGuessing(int max) {
     int i = 2;
     int response;

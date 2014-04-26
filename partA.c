@@ -74,6 +74,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 
+// Called by atexit to make sure all pipe ends are closed
 void closePipes(void) {
     close(p.guess[0]);
     close(p.guess[1]);
@@ -81,6 +82,7 @@ void closePipes(void) {
     close(p.answer[1]);
 }
 
+// Called by the parent process to respond to guesses
 void startAnswering(int answer) {
     int nr, response, guess;
     printf("parent waiting for guess\n");
@@ -103,6 +105,7 @@ void startAnswering(int answer) {
     }
 }
 
+// Called by the child process to pipe guesses to the parent process
 void startGuessing(int max) {
     int i = 2;
     int response;

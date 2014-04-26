@@ -19,8 +19,10 @@ static char *query = "query", *response = "response";
 int main(int argc, char **argv) {
     int answer;
 
+    // Close pipes on exit
     atexit(closePipes);
 
+    // Prompt until the user enters a valid number
     do {
         printf("Enter a number between 1 and %d: ", MAX);
         if(scanf("%d", &answer) == -1) {
@@ -28,18 +30,23 @@ int main(int argc, char **argv) {
         }
     } while(answer < 1 || answer > MAX);
 
+    // Open pipes
     fdGuess = open(query, O_RDONLY);
     fdAnswer = open(response, O_WRONLY);
+    // Listen and respond to guesses
     startAnswering(answer);
 
     return 0;
 }
 
+// Called by atexit to close the pipes on exit
 void closePipes(void) {
     close(fdGuess);
     close(fdAnswer);
 }
 
+// Listen for guesses on the query pipe and respond with a yes or no
+// by sending a 1 or 0
 void startAnswering(int answer) {
     int nr, response, guess;
     printf("parent waiting for guess\n");
